@@ -1,0 +1,16 @@
+{
+  "name": "agent-infra",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "gateway",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "start:stripe": "npm run start -w packages/stripe-mcp",
+    "start:gateway": "npm run start -w gateway",
+    "start:dashboard": "npm run start -w dashboard"
+  }
+}

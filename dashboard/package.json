@@ -1,0 +1,12 @@
+{
+  "name": "@agent-infra/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx serve public -l 3456"
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  }
+}
