@@ -2,12 +2,8 @@
   "name": "@agent-infra/dashboard",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "build": "echo 'Dashboard is static — nothing to build'",
-    "start": "npx serve public -l 3456"
-  },
-  "dependencies": {
-    "serve": "^14.2.0"
+    "start": "echo 'Dashboard is served by the gateway'"
   }
 }

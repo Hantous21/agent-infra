@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Infra — Analytics Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: #0a0a0f;
+      color: #e1e1e8;
+      padding: 2rem;
+    }
+    .container { max-width: 1280px; margin: 0 auto; }
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem;
+    }
+    h1 { font-size: 1.75rem; font-weight: 700; }
+    .header-right { display: flex; align-items: center; gap: 1rem; }
+    .badge {
+      background: #1a1a2e; color: #8b8bf0; padding: 0.4rem 1rem;
+      border-radius: 999px; font-size: 0.85rem; font-weight: 500; border: 1px solid #2a2a4e;
+    }
+    .connection-bar {
+      display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;
+      padding: 0.75rem 1rem; background: #12121a; border: 1px solid #1e1e30; border-radius: 8px; font-size: 0.85rem;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot.connected { background: #4ade80; animation: pulse 2s ease-in-out infinite; }
+    .dot.disconnected { background: #f87171; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .settings-bar {
+      background: #12121a; border: 1px solid #1e1e30; border-radius: 8px;
+      padding: 1rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    }
+    .settings-bar label { font-size: 0.8rem; color: #6b6b80; }
+    .settings-bar input {
+      background: #1a1a2e; border: 1px solid #2a2a4e; color: #e1e1e8;
+      padding: 0.4rem 0.7rem; border-radius: 6px; font-family: 'Inter', monospace; font-size: 0.8rem; min-width: 200px; flex: 1;
+    }
+    .settings-bar input::placeholder { color: #3a3a50; }
+    .btn {
+      background: #2a2a4e; border: 1px solid #3a3a5e; color: #e1e1e8;
+      padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-family: inherit;
+    }
+    .btn:hover { background: #3a3a5e; }
+    .btn.primary { background: #4a4a8a; border-color: #5a5aaa; }
+    .btn.primary:hover { background: #5a5aaa; }
+    .hidden { display: none !important; }
+    .error-text { color: #f87171; font-size: 0.8rem; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; }
+    .card { background: #12121a; border: 1px solid #1e1e30; border-radius: 12px; padding: 1.25rem; }
+    .card-label { font-size: 0.8rem; color: #6b6b80; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+    .card-value { font-size: 2rem; font-weight: 700; }
+    .card-value.green { color: #4ade80; } .card-value.red { color: #f87171; }
+    .card-value.blue { color: #60a5fa; } .card-value.yellow { color: #facc15; }
+    .section-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #a0a0b8; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b6b80; padding: 0.75rem 1rem; border-bottom: 1px solid #1e1e30; }
+    td { padding: 0.75rem 1rem; border-bottom: 1px solid #14141f; font-size: 0.9rem; }
+    .status { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 500; }
+    .status.success { background: #0a2f1a; color: #4ade80; }
+    .status.error { background: #2f0a0a; color: #f87171; }
+    .tool-badge { display: inline-block; background: #1a1a2e; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.8rem; color: #8b8bf0; }
+    .bar-chart { display: flex; align-items: flex-end; gap: 0.5rem; height: 100px; margin-top: 0.5rem; }
+    .bar { flex: 1; background: linear-gradient(to top, #4a4a8a, #6a6ad0); border-radius: 4px 4px 0 0; min-height: 4px; transition: height 0.3s ease; }
+    .empty-state { text-align: center; padding: 3rem; color: #6b6b80; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem; }
+    @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } .two-col { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } body { padding: 1rem; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>⚡ Agent Infra</h1>
+    <div class="header-right">
+      <span class="badge" id="serverCount">—</span>
+      <span class="badge" id="keyPrefix">—</span>
+    </div>
+  </header>
+
+  <div class="connection-bar" id="connectionBar">
+    <span class="dot disconnected" id="statusDot"></span>
+    <span id="statusText">Disconnected — enter URL + API key below</span>
+    <span style="margin-left: auto;"></span>
+    <button class="btn" onclick="refresh()">⟳ Refresh</button>
+  </div>
+
+  <div class="settings-bar">
+    <label>Gateway URL</label>
+    <input type="text" id="gatewayUrl" placeholder="https://your-app.onrender.com" />
+    <label>API Key</label>
+    <input type="text" id="apiKeyInput" placeholder="ski_..." />
+    <button class="btn primary" onclick="connect()">Connect</button>
+    <span class="error-text hidden" id="connectError">Connection failed</span>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="card-label">Total Tool Calls</div><div class="card-value blue" id="totalCalls">—</div></div>
+    <div class="card"><div class="card-label">Successful</div><div class="card-value green" id="successCalls">—</div></div>
+    <div class="card"><div class="card-label">Failed</div><div class="card-value red" id="failedCalls">—</div></div>
+    <div class="card"><div class="card-label">Avg Duration</div><div class="card-value yellow" id="avgDuration">—</div></div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <div class="section-title">📊 Calls by Tool</div>
+      <table><thead><tr><th>Tool</th><th>Calls</th><th>%</th></tr></thead><tbody id="toolsBody"><tr><td colspan="3" class="empty-state">Connect to see data...</td></tr></tbody></table>
+    </div>
+    <div class="card">
+      <div class="section-title">📈 Duration Trend (Last 20)</div>
+      <div class="bar-chart" id="barChart"></div>
+      <p style="font-size:0.75rem; color:#6b6b80; margin-top:0.5rem; text-align:center;">Each bar = one tool call duration</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">🕐 Recent Tool Calls</div>
+    <div style="overflow-x:auto;">
+      <table><thead><tr><th>Time</th><th>Tool</th><th>Agent</th><th>Duration</th><th>Status</th></tr></thead><tbody id="recentBody"><tr><td colspan="5" class="empty-state">No activity yet.</td></tr></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+  let state = {
+    gatewayUrl: localStorage.getItem('agent_infra_gw') || '',
+    apiKey: localStorage.getItem('agent_infra_key') || '',
+    connected: false,
+  };
+
+  document.getElementById('gatewayUrl').value = state.gatewayUrl;
+  document.getElementById('apiKeyInput').value = state.apiKey;
+  if (state.apiKey && state.gatewayUrl) setTimeout(connect, 500);
+
+  async function connect() {
+    state.gatewayUrl = document.getElementById('gatewayUrl').value.trim().replace(/\/+$/, '');
+    state.apiKey = document.getElementById('apiKeyInput').value.trim();
+    localStorage.setItem('agent_infra_gw', state.gatewayUrl);
+    localStorage.setItem('agent_infra_key', state.apiKey);
+
+    const errorEl = document.getElementById('connectError');
+    errorEl.classList.add('hidden');
+    if (!state.gatewayUrl || !state.apiKey) { errorEl.textContent = 'Enter URL + API Key'; errorEl.classList.remove('hidden'); return; }
+
+    setStatus('disconnected', 'Connecting...');
+    try {
+      const r = await fetch(`${state.gatewayUrl}/health`, { headers: { Authorization: `Bearer ${state.apiKey}` } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setStatus('connected', `Connected`);
+      document.getElementById('serverCount').textContent = `${d.apiKeys || 0} keys`;
+      document.getElementById('keyPrefix').textContent = state.apiKey.slice(0, 12) + '...';
+      state.connected = true;
+      await refresh();
+    } catch (err) {
+      setStatus('disconnected', 'Connection failed');
+      errorEl.textContent = `${err.message}`;
+      errorEl.classList.remove('hidden');
+      state.connected = false;
+    }
+  }
+
+  async function refresh() {
+    if (!state.connected) { if (state.apiKey) await connect(); return; }
+    try {
+      const r = await fetch(`${state.gatewayUrl}/api/analytics`, { headers: { Authorization: `Bearer ${state.apiKey}` } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      render(await r.json());
+      setStatus('connected', 'Connected');
+    } catch (err) { setStatus('disconnected', `Refresh: ${err.message}`); state.connected = false; }
+  }
+
+  function render(data) {
+    document.getElementById('totalCalls').textContent = data.totalCalls ?? 0;
+    document.getElementById('successCalls').textContent = data.successfulCalls ?? 0;
+    document.getElementById('failedCalls').textContent = data.failedCalls ?? 0;
+    document.getElementById('avgDuration').textContent = (data.avgDurationMs ?? 0) + 'ms';
+
+    const total = data.totalCalls || 0;
+    const tb = document.getElementById('toolsBody');
+    if (data.topTools?.length) {
+      tb.innerHTML = data.topTools.map(t => `<tr><td><span class="tool-badge">${t.toolName}</span></td><td>${t.count}</td><td>${total > 0 ? Math.round(t.count/total*100) : 0}%</td></tr>`).join('');
+    } else { tb.innerHTML = '<tr><td colspan="3" class="empty-state">No tool calls yet</td></tr>'; }
+
+    const bc = document.getElementById('barChart');
+    const recent = data.recentCalls || [];
+    const last20 = recent.slice(0, 20).reverse();
+    if (last20.length) {
+      const max = Math.max(...last20.map(c => c.durationMs), 1);
+      bc.innerHTML = last20.map(c => `<div class="bar" style="height:${Math.max(4, (c.durationMs/max)*100)}px" title="${c.toolName} — ${c.durationMs}ms"></div>`).join('');
+    } else { bc.innerHTML = '<div class="empty-state" style="padding:1rem;">No calls</div>'; }
+
+    const rb = document.getElementById('recentBody');
+    if (recent.length) {
+      rb.innerHTML = recent.slice(0, 30).map(e =>
+        `<tr><td style="white-space:nowrap;">${new Date(e.timestamp).toLocaleTimeString()}</td><td><span class="tool-badge">${e.toolName}</span></td><td style="font-size:0.8rem;font-family:monospace;">${(e.agentId||'').slice(0,20)}</td><td>${e.durationMs}ms</td><td><span class="status ${e.status}">${e.status}</span></td></tr>`
+      ).join('');
+    } else { rb.innerHTML = '<tr><td colspan="5" class="empty-state">No activity yet.</td></tr>'; }
+  }
+
+  function setStatus(type, msg) {
+    document.getElementById('statusDot').className = 'dot ' + type;
+    document.getElementById('statusText').textContent = msg;
+  }
+
+  setInterval(() => { if (state.connected) refresh(); }, 10000);
+</script>
+</body>
+</html>
