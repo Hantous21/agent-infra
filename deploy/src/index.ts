@@ -8,6 +8,7 @@ import { tools } from './stripe-tools.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '10000', 10);
 const DASHBOARD_DIR = path.resolve(__dirname, '../dashboard');
+const HAS_STRIPE = !!process.env.STRIPE_SECRET_KEY;
 
 // ──────────────────────────────────────────────
 // Analytics event store
@@ -46,9 +47,12 @@ function validateKey(header: string | undefined): ApiKey | null {
 async function executeTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
   const tool = tools.find(t => t.name === toolName);
   if (!tool) throw new Error(`Unknown tool: ${toolName}`);
-  const result = await tool.handler(args);
 
-  // Return just the content format the MCP protocol expects
+  if (!HAS_STRIPE) {
+    throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY environment variable.');
+  }
+
+  const result = await tool.handler(args);
   if (typeof result === 'object' && result !== null && 'success' in result) {
     const r = result as { success: boolean; data?: unknown; error?: string };
     if (r.success) return { content: [{ type: 'text' as const, text: JSON.stringify(r.data, null, 2) }] };
@@ -73,6 +77,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok', uptime: process.uptime(), version: '0.1.0',
     apiKeys: apiKeys.size, events: events.length, tools: tools.map(t => t.name),
+    stripe: HAS_STRIPE ? 'configured' : 'not configured — set STRIPE_SECRET_KEY',
   });
 });
 
@@ -105,18 +110,15 @@ app.post('/mcp/stripe/:tool', async (req, res) => {
       error: err instanceof Error ? err.message : String(err),
       durationMs, timestamp: new Date().toISOString(),
     });
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+
+    const status = err instanceof Error && err.message.includes('not configured') ? 503 : 400;
+    res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
 // MCP tools list
 app.get('/mcp/stripe/tools', (_req, res) => {
-  res.json({
-    tools: tools.map(t => ({
-      name: t.name, description: t.description,
-      inputSchema: { type: 'object', properties: buildJsonSchema(t.schema), additionalProperties: false },
-    })),
-  });
+  res.json({ tools: tools.map(t => ({ name: t.name, description: t.description })) });
 });
 
 // Analytics
@@ -149,31 +151,24 @@ app.get('/api/analytics', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
-// Schema helper
-// ──────────────────────────────────────────────
-
-function buildJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  const props: Record<string, unknown> = {};
-  for (const [key, _val] of Object.entries(schema)) {
-    props[key] = { type: 'string' };
-  }
-  return props;
-}
-
-// ──────────────────────────────────────────────
 // Start
 // ──────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`\n╔══════════════════════════════════════════════╗`);
-  console.log(`║        🚀 Agent Infra Gateway               ║`);
-  console.log(`║                                              ║`);
-  console.log(`║  Port:     ${String(PORT).padEnd(29)}║`);
-  console.log(`║  Keys:     ${apiKeys.size} active${' '.repeat(24)}║`);
-  console.log(`║  Events:   ${events.length} recorded${' '.repeat(23)}║`);
-  console.log(`║  Tools:    ${tools.length} registered${' '.repeat(22)}║`);
-  console.log(`║                                              ║`);
-  console.log(`║  Dashboard: http://localhost:${PORT}          ║`);
-  console.log(`╚══════════════════════════════════════════════╝\n`);
+  console.log(`\n╔══════════════════════════════════════════════════════╗`);
+  console.log(`║        🚀 Agent Infra Gateway                      ║`);
+  console.log(`║                                                    ║`);
+  console.log(`║  Port:     ${String(PORT).padEnd(37)}║`);
+  console.log(`║  Keys:     ${apiKeys.size} active${' '.repeat(32)}║`);
+  console.log(`║  Tools:    ${tools.length} registered${' '.repeat(30)}║`);
+  if (HAS_STRIPE) {
+    console.log(`║  Stripe:   ✅ Connected (test mode)${' '.repeat(21)}║`);
+  } else {
+    console.log(`║  Stripe:   ⚠️  Not configured${' '.repeat(26)}║`);
+    console.log(`║            Set STRIPE_SECRET_KEY env var.${' '.repeat(18)}║`);
+  }
+  console.log(`║                                                    ║`);
+  console.log(`║  Dashboard: http://localhost:${PORT}                ║`);
+  console.log(`╚══════════════════════════════════════════════════════╝\n`);
   console.log(`  🔑 Demo API Key: ski_demo_key_001\n`);
 });

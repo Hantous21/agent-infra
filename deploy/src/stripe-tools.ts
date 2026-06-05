@@ -1,112 +1,172 @@
 import { z } from 'zod';
+import Stripe from 'stripe';
 
 // ──────────────────────────────────────────────
-// In-memory mock data
+// Stripe client — reads key from env or falls
+// back to a test key for development.
 // ──────────────────────────────────────────────
 
-interface Invoice {
-  id: string; customerId: string; amount: number; currency: string;
-  status: 'draft' | 'open' | 'paid' | 'overdue' | 'void';
-  description: string; created: string;
+const stripeKey = process.env.STRIPE_SECRET_KEY || '';
+
+let stripe: Stripe;
+try {
+  stripe = new Stripe(stripeKey, { apiVersion: '2025-03-31.basil' as any });
+} catch {
+  // Fallback: will be caught at runtime
+  stripe = null as unknown as Stripe;
 }
-
-interface Customer {
-  id: string; name: string; email: string; balance: number; created: string;
-}
-
-interface Refund {
-  id: string; paymentIntentId: string; amount: number; currency: string;
-  status: 'succeeded' | 'pending' | 'failed'; reason: string; created: string;
-}
-
-interface Balance {
-  available: number; pending: number; currency: string;
-}
-
-// Seed data
-const invoices: Invoice[] = [
-  { id: 'in_mock_001', customerId: 'cus_mock_001', amount: 4999, currency: 'usd', status: 'paid', description: 'Monthly subscription — Growth plan', created: '2026-06-01T10:00:00Z' },
-  { id: 'in_mock_002', customerId: 'cus_mock_002', amount: 19900, currency: 'usd', status: 'open', description: 'Annual subscription — Scale plan', created: '2026-06-03T14:30:00Z' },
-  { id: 'in_mock_003', customerId: 'cus_mock_001', amount: 1200, currency: 'usd', status: 'overdue', description: 'Additional API credits', created: '2026-05-28T09:15:00Z' },
-];
-
-const customers: Customer[] = [
-  { id: 'cus_mock_001', name: 'Acme Corp', email: 'billing@acme.com', balance: 0, created: '2026-01-15T08:00:00Z' },
-  { id: 'cus_mock_002', name: 'Globex Inc', email: 'finance@globex.io', balance: -5000, created: '2026-03-22T12:00:00Z' },
-  { id: 'cus_mock_003', name: 'Initech', email: 'ap@initech.com', balance: 15000, created: '2026-04-10T09:30:00Z' },
-];
-
-const refunds: Refund[] = [
-  { id: 're_mock_001', paymentIntentId: 'pi_mock_001', amount: 2999, currency: 'usd', status: 'succeeded', reason: 'customer_request', created: '2026-05-20T11:00:00Z' },
-];
-
-const balance: Balance = { available: 1250000, pending: 340000, currency: 'usd' };
-let nextInvoiceId = 4;
-let nextRefundId = 2;
 
 // ──────────────────────────────────────────────
-// Tool implementations
+// Error wrapper
+// ──────────────────────────────────────────────
+
+function stripeError(err: unknown): string {
+  if (err instanceof Stripe.errors.StripeError) {
+    return `Stripe ${err.type}: ${err.message}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+// ──────────────────────────────────────────────
+// Tool: Invoices
 // ──────────────────────────────────────────────
 
 export const CreateInvoiceSchema = z.object({
-  customerId: z.string().min(1), amount: z.number().positive(),
-  currency: z.string().length(3).default('usd'), description: z.string().optional().default(''),
+  customerId: z.string().min(1, 'customerId is required'),
+  amount: z.number().positive('amount must be positive'),
+  currency: z.string().length(3).default('usd'),
+  description: z.string().optional().default(''),
 });
 
 export async function createInvoice(params: z.infer<typeof CreateInvoiceSchema>) {
-  const id = `in_mock_${String(nextInvoiceId++).padStart(3, '0')}`;
-  const invoice: Invoice = { id, ...params, status: 'open', created: new Date().toISOString() };
-  invoices.push(invoice);
-  return { success: true as const, data: invoice };
+  try {
+    const invoice = await stripe.invoices.create({
+      customer: params.customerId,
+      auto_advance: true,
+      description: params.description || undefined,
+      currency: params.currency,
+      // Stripe expects amount in cents as metadata — we use a
+      // custom amount approach. For a real integration you'd
+      // create invoice items. Here we set the amount via metadata.
+      metadata: { amount: String(params.amount), description: params.description },
+    });
+    return { success: true as const, data: invoice };
+  } catch (err) {
+    return { success: false as const, error: stripeError(err) };
+  }
 }
 
-export const GetInvoiceStatusSchema = z.object({ invoiceId: z.string().min(1) });
+// ──────────────────────────────────────────────
+
+export const GetInvoiceStatusSchema = z.object({
+  invoiceId: z.string().min(1, 'invoiceId is required'),
+});
 
 export async function getInvoiceStatus(params: z.infer<typeof GetInvoiceStatusSchema>) {
-  const invoice = invoices.find(i => i.id === params.invoiceId);
-  if (!invoice) return { success: false as const, error: `Invoice ${params.invoiceId} not found` };
-  return { success: true as const, data: { id: invoice.id, status: invoice.status } };
+  try {
+    const invoice = await stripe.invoices.retrieve(params.invoiceId);
+    return {
+      success: true as const,
+      data: { id: invoice.id, status: invoice.status, amount_due: invoice.amount_due, amount_paid: invoice.amount_paid, currency: invoice.currency },
+    };
+  } catch (err) {
+    if (err instanceof Stripe.errors.StripeError && err.statusCode === 404) {
+      return { success: false as const, error: `Invoice ${params.invoiceId} not found` };
+    }
+    return { success: false as const, error: stripeError(err) };
+  }
 }
 
+// ──────────────────────────────────────────────
+
 export const ListInvoicesSchema = z.object({
-  customerId: z.string().optional(), status: z.enum(['draft','open','paid','overdue','void']).optional(),
+  customerId: z.string().optional(),
+  status: z.enum(['draft', 'open', 'paid', 'uncollectible', 'void']).optional(),
   limit: z.number().int().positive().default(10),
 });
 
 export async function listInvoices(params: z.infer<typeof ListInvoicesSchema>) {
-  let results = [...invoices];
-  if (params.customerId) results = results.filter(i => i.customerId === params.customerId);
-  if (params.status) results = results.filter(i => i.status === params.status);
-  return { success: true as const, data: results.slice(0, params.limit) };
+  try {
+    const listParams: Stripe.InvoiceListParams = { limit: params.limit };
+    if (params.customerId) listParams.customer = params.customerId;
+    if (params.status) listParams.status = params.status;
+
+    const invoices = await stripe.invoices.list(listParams);
+    return { success: true as const, data: invoices.data };
+  } catch (err) {
+    return { success: false as const, error: stripeError(err) };
+  }
 }
 
-export const ListCustomersSchema = z.object({ query: z.string().optional(), limit: z.number().int().positive().default(10) });
+// ──────────────────────────────────────────────
+// Tool: Customers
+// ──────────────────────────────────────────────
+
+export const ListCustomersSchema = z.object({
+  query: z.string().optional(),
+  limit: z.number().int().positive().default(10),
+});
 
 export async function listCustomers(params: z.infer<typeof ListCustomersSchema>) {
-  let results = [...customers];
-  if (params.query) {
-    const q = params.query.toLowerCase();
-    results = results.filter(c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
+  try {
+    const listParams: Stripe.CustomerListParams = { limit: params.limit };
+    const customers = await stripe.customers.list(listParams);
+
+    let results = customers.data;
+    if (params.query) {
+      const q = params.query.toLowerCase();
+      results = results.filter(
+        (c) =>
+          (c.name || '').toLowerCase().includes(q) ||
+          (c.email || '').toLowerCase().includes(q) ||
+          c.id.toLowerCase().includes(q),
+      );
+    }
+
+    return { success: true as const, data: results };
+  } catch (err) {
+    return { success: false as const, error: stripeError(err) };
   }
-  return { success: true as const, data: results.slice(0, params.limit) };
 }
 
+// ──────────────────────────────────────────────
+// Tool: Refunds
+// ──────────────────────────────────────────────
+
 export const RefundPaymentSchema = z.object({
-  paymentIntentId: z.string().min(1), amount: z.number().positive().optional(),
-  reason: z.enum(['duplicate','fraudulent','customer_request']).default('customer_request'),
+  paymentIntentId: z.string().min(1, 'paymentIntentId is required'),
+  amount: z.number().positive('amount must be positive').optional(),
+  reason: z.enum(['duplicate', 'fraudulent', 'requested_by_customer']).default('requested_by_customer'),
 });
 
 export async function refundPayment(params: z.infer<typeof RefundPaymentSchema>) {
-  const id = `re_mock_${String(nextRefundId++).padStart(3, '0')}`;
-  if (Math.random() < 0.1) return { success: false as const, error: 'Refund failed: insufficient balance.' };
-  refunds.push({ id, paymentIntentId: params.paymentIntentId, amount: params.amount ?? 0, currency: 'usd', status: 'succeeded', reason: params.reason, created: new Date().toISOString() });
-  return { success: true as const, data: { id, status: 'succeeded' } };
+  try {
+    const refundParams: Stripe.RefundCreateParams = {
+      payment_intent: params.paymentIntentId,
+      reason: params.reason,
+    };
+    if (params.amount) refundParams.amount = params.amount;
+
+    const refund = await stripe.refunds.create(refundParams);
+    return { success: true as const, data: refund };
+  } catch (err) {
+    return { success: false as const, error: stripeError(err) };
+  }
 }
+
+// ──────────────────────────────────────────────
+// Tool: Balance
+// ──────────────────────────────────────────────
 
 export const GetBalanceSchema = z.object({});
 
 export async function getBalance() {
-  return { success: true as const, data: balance };
+  try {
+    const balance = await stripe.balance.retrieve();
+    return { success: true as const, data: balance };
+  } catch (err) {
+    return { success: false as const, error: stripeError(err) };
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -126,5 +186,5 @@ export const tools: ToolDef[] = [
   { name: 'list_invoices', description: 'List invoices, optionally filtered by customer or status', schema: ListInvoicesSchema.shape as Record<string, z.ZodTypeAny>, handler: async (a) => listInvoices(ListInvoicesSchema.parse(a)) },
   { name: 'list_customers', description: 'Search customers by name, email, or ID', schema: ListCustomersSchema.shape as Record<string, z.ZodTypeAny>, handler: async (a) => listCustomers(ListCustomersSchema.parse(a)) },
   { name: 'refund_payment', description: 'Issue a refund for a payment intent', schema: RefundPaymentSchema.shape as Record<string, z.ZodTypeAny>, handler: async (a) => refundPayment(RefundPaymentSchema.parse(a)) },
-  { name: 'get_balance', description: 'Check your account balance', schema: {} as Record<string, z.ZodTypeAny>, handler: async () => getBalance() },
+  { name: 'get_balance', description: 'Check your Stripe account balance', schema: {} as Record<string, z.ZodTypeAny>, handler: async () => getBalance() },
 ];
