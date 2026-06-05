@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "echo 'Dashboard is static — nothing to build'",
     "start": "npx serve public -l 3456"
   },
   "dependencies": {
