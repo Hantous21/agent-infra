@@ -1,0 +1,21 @@
+﻿{
+  "$schema": "https://www.greptile.com/schemas/greptile.json",
+
+  "review": {
+    "enabled": true,
+
+    "triggers": {
+      "on_pull_request": true,
+      "on_push":         false,
+      "draft_prs":       false
+    },
+
+    "comment_types": {
+      "logic":    true,
+      "security": true,
+      "style":    false,
+      "syntax":   false
+    },
+
+    "strictness":
+
